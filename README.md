@@ -1,9 +1,9 @@
 # pnc-rs
 Fast multithreaded Rust-implementation of PNC (Parallel Neighbourhood Correlation).
 
-Based on [rust-py](https://github.com/yrin/pnc-py) as described in my [M.Sc. thesis](https://kurser.math.su.se/pluginfile.php/105616/mod_folder/content/0/2023/Yrin_Eldfjell_MSc_datalogi_2023.pdf), this repo provides a functional (experimental) multithreaded Rust-implementation of the PNC variant of the NC (Neighbourhood Correlation) algorithm.
+Based on [rust-py](https://github.com/yrin/pnc-py). The PNC algorithm is described in my [M.Sc. thesis](https://kurser.math.su.se/pluginfile.php/105616/mod_folder/content/0/2023/Yrin_Eldfjell_MSc_datalogi_2023.pdf). This repo provides a functional (experimental) multithreaded Rust-implementation of the PNC variant of the NC (Neighbourhood Correlation) algorithm.
 
-It's time complexity is better than [snc](https://github.com/arvestad/snc/) and [snc-cpp](https://github.com/arvestad/fast-neighborhood-correlation) by a factor of `log(m)`, where `m` is the number of alignments to the reference database per query sequence (assuming an equal number of alignments per query).
+It's time complexity is better than [snc](https://github.com/arvestad/snc/) and [snc-cpp](https://github.com/arvestad/fast-neighborhood-correlation) by a factor of `log(m)`, where `m` is the number of alignments to the reference database per query sequence (assuming an equal number of alignments per query). See my thesis for details.
 
 
 ## Performance
