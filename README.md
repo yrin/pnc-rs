@@ -12,14 +12,14 @@ Aligner settings (Diamond v. 2.1.3):
 
 CPU: 8 cores, 16 threads.
 
-|  Sample               | Proteins | Alignments   |   snc-py        |   snc-cpp |   pnc-py    |    pnc-rs | 
-| :-------------------- | -------: | ---------:   | --------------: | --------: | ----------: | --------: |
-| S. cerevisiae         | 6 k      | 36 k         |        6        |         1 |          0  |         0 |
-| HSA+MMU               | 38 k     | 1,2 M        |      701        |        69 |         32  |         3 |
-| 13_proteomes          | 411 k    | 24 M         |    36540 [est.] |      8864 |        880  |        76 |
-| UniRef50 [subsampled] | 4 M      | 176 M        |     N/A         |       N/A |        N/A  |      1436 |
+|  Sample               | Proteins | Alignments   |   snc-py        |   snc-cpp   |   pnc-py     |    pnc-rs   | 
+| :-------------------- | -------: | ---------:   | --------------: | --------:   | ----------:  | --------:   |
+| S. cerevisiae         | 6 k      | 36 k         |        6 s      |         1 s |          0 s |         0 s |
+| HSA+MMU               | 38 k     | 1,2 M        |      701 s      |        69 s |         32 s |         3 s |
+| 13_proteomes          | 411 k    | 24 M         |  Est.: 36540 s |      8864 s |        880 s |        76 s |
+| UniRef50 [subsampled] | 4 M      | 176 M        |     N/A         |       N/A   |        N/A   |      1436 s |
 
-(_In Seconds. Aligner running time not included. `snc-py` progresses consistently linearly during its main computation step, so the estimated time is a reliable lower bound for the actual time required._)
+(_Aligner running time not included. `snc-py` progresses consistently linearly during its main computation step, so the estimated time is a reliable lower bound for the actual time required._)
 
 Peak memory usage for `pnc-rs`on the subsampled UniRef50 dataset was about 58 GB. The dominating term is the 4+4+4 bytes (2x query id u32's and a float32) used for storing the cross-terms (query_x_score * query_y_score) needed to complete the final NC calculation step.
 
