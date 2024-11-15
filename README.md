@@ -27,6 +27,10 @@ Peak memory usage for `pnc-rs`on the subsampled UniRef50 dataset was about 58 GB
 
 The outputs of all 4 tools were sorted and compared (for HSA+MMU). Each entry deviated from the mean by at most 0.00075 [the valid range of NC-scores is 0-1], which is reasonable due to the number of significant digits and usage of 32-bit floats during the calculations in both PNC versions.
 
+## Usage
+
+Compile with Rust `cargo`. The resulting binary takes a blast-tab style alignment file as its first argument (entry format: `QUERY_ACC<whitespace>REF_ACC<whitespace>SCORE<newline>`). It outputs the computed NC-scores to `stdout` and various info-messages to `stderr`. There are no command line options available at this time.
+
 
 ## References
 [1] Song N, Joseph JM, Davis GB, Durand D (May 2008). Sequence Similarity Network Reveals Common Ancestry of Multidomain Proteins.
