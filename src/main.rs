@@ -51,6 +51,7 @@ use std::path::Path;
 use std::iter::zip;
 use std::str::FromStr;
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::Instant;
 
 macro_rules! info {
@@ -99,35 +100,20 @@ type CrossTermValue = CalcFloat;
 type CrossTermsVec = Vec<(QueryIdPair, CrossTermValue)>;
 type CrossTermsMap = HashMap<QueryIdPair, CrossTermValue>;
 
-struct ComputeResultVec {
+
+struct ComputeResult<T> {
     sum: QuerySums,
     sum_sq: QuerySquareSums,
-    cross_terms_bins: Vec<CrossTermsVec>
-}
-impl ComputeResultVec {
-    pub fn new(n_queries: usize, n_bins: u32) -> Self {
-        ComputeResultVec {
-            sum: vec![0.0; n_queries],
-            sum_sq: vec![0.0; n_queries],
-            cross_terms_bins: (0..n_bins)
-                .map(|_| CrossTermsVec::new())
-                .collect()
-        }
-    }
+    cross_terms_bins: Vec<T>
 }
 
-struct ComputeResultMap {
-    sum: QuerySums,
-    sum_sq: QuerySquareSums,
-    cross_terms_bins: Vec<CrossTermsMap>
-}
-impl ComputeResultMap {
+impl<T: Default> ComputeResult<T> {
     pub fn new(n_queries: usize, n_bins: u32) -> Self {
-        ComputeResultMap {
+        ComputeResult::<T> {
             sum: vec![0.0; n_queries],
             sum_sq: vec![0.0; n_queries],
             cross_terms_bins: (0..n_bins)
-                .map(|_| CrossTermsMap::new())
+                .map(|_| <T>::default())
                 .collect()
         }
     }
@@ -254,7 +240,8 @@ fn process_alignments(config: &Config,
                     .map(|_| CrossTermsVec::new())
                     .collect()
             };
-            let mut res = ComputeResultVec::new(config.n_queries, config.n_memory_threads);
+            let mut res = ComputeResult::<CrossTermsVec>::new(
+                config.n_queries, config.n_memory_threads);
             /* Loop over target ids. */
             let mut insert_counter: usize = 0;
             for query_scores in targets {
@@ -299,11 +286,12 @@ fn spawn_merger_threads(config: &Config,
                         rx_sum: Receiver<QuerySums>, 
                         rx_sum_sq: Receiver<QuerySquareSums>, 
                         rx_ct_pool: Vec<Receiver<CrossTermsVec>>) 
-    -> (thread::JoinHandle<QuerySums>, 
-        thread::JoinHandle<QuerySquareSums>, 
-        Vec<thread::JoinHandle<CrossTermsMap>>) {
-    let mut cr = ComputeResultMap::new(config.n_queries, config.n_memory_threads); 
-    let merger_thread_sum: thread::JoinHandle<_> = thread::spawn(move || {
+    -> (JoinHandle<QuerySums>, 
+        JoinHandle<QuerySquareSums>, 
+        Vec<JoinHandle<CrossTermsMap>>) {
+    let mut cr = ComputeResult::<CrossTermsMap>::new(
+        config.n_queries, config.n_memory_threads); 
+    let merger_thread_sum: JoinHandle<_> = thread::spawn(move || {
         for sum_chunk in rx_sum {
             for (i, s) in sum_chunk.into_iter().enumerate() {
                 cr.sum[i] += s;
@@ -311,7 +299,7 @@ fn spawn_merger_threads(config: &Config,
         }
         cr.sum
     });
-    let merger_thread_sum_sq: thread::JoinHandle<_> = thread::spawn(move || {
+    let merger_thread_sum_sq: JoinHandle<_> = thread::spawn(move || {
         for sum_sq_chunk in rx_sum_sq {
             for (i, s) in sum_sq_chunk.into_iter().enumerate() {
                 cr.sum_sq[i] += s;
@@ -319,7 +307,7 @@ fn spawn_merger_threads(config: &Config,
         }
         cr.sum_sq
     });
-    let merger_thread_pool_ct: Vec<thread::JoinHandle<_>> = zip(cr.cross_terms_bins, rx_ct_pool)
+    let merger_thread_pool_ct: Vec<JoinHandle<_>> = zip(cr.cross_terms_bins, rx_ct_pool)
         .enumerate()
         .map(move |(_bin_idx, (mut cross_terms, rx_ct))| {
             thread::spawn(move || {
@@ -346,7 +334,7 @@ fn spawn_merger_threads(config: &Config,
 
 /// Compute the NC scores from the merged intermediate computations.
 fn compute_nc_scores(num_queries: usize, 
-                     merged_results: ComputeResultMap,
+                     merged_results: ComputeResult::<CrossTermsMap>,
                      nc_threshold: CalcFloat) -> NCScoreVec {
     let n_float: CalcFloat = num_queries as CalcFloat;
     let sum = merged_results.sum;
@@ -438,13 +426,14 @@ fn run(path: &Path) -> Result<(), Box<dyn Error>> {
     
     let (merger_thread_sum,
          merger_thread_sum_sq,
-         merger_thread_pool_ct): (thread::JoinHandle<QuerySums>, 
-                                  thread::JoinHandle<QuerySquareSums>, 
-                                  Vec<thread::JoinHandle<CrossTermsMap>>) = spawn_merger_threads(
+         merger_thread_pool_ct): (JoinHandle<QuerySums>, 
+                                  JoinHandle<QuerySquareSums>, 
+                                  Vec<JoinHandle<CrossTermsMap>>) = spawn_merger_threads(
         &config, rx_sum, rx_sum_sq, rx_ct_pool);
     process_alignments(&config, &alignments, tx_sum, tx_sum_sq, tx_ct_pool);
 
-    let mut merged_results = ComputeResultMap::new(config.n_queries, config.n_memory_threads);
+    let mut merged_results = ComputeResult::<CrossTermsMap>::new(
+        config.n_queries, config.n_memory_threads);
     merged_results.sum = merger_thread_sum.join().expect("Internal thread error");
     merged_results.sum_sq = merger_thread_sum_sq.join().expect("Internal thread error");
     merged_results.cross_terms_bins = merger_thread_pool_ct.into_iter().map(
