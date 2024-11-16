@@ -15,9 +15,9 @@ CPU: 8 cores, 16 threads.
 |  Sample               | Proteins | Alignments   |   snc-py        |   snc-cpp   |   pnc-py     |    pnc-rs   | 
 | :-------------------- | -------: | ---------:   | --------------: | --------:   | ----------:  | --------:   |
 | S. cerevisiae         | 6 k      | 36 k         |        6 s      |         1 s |          0 s |         0 s |
-| HSA+MMU               | 38 k     | 1,2 M        |      701 s      |        69 s |         32 s |         3 s |
-| 13_proteomes          | 411 k    | 24 M         |  Est.: 36540 s |      8864 s |        880 s |        76 s |
-| UniRef50 [subsampled] | 4 M      | 176 M        |     N/A         |       N/A   |        N/A   |      1436 s |
+| HSA+MMU               | 38 k     | 1,2 M        |      701 s      |        69 s |         32 s |         1 s |
+| 13_proteomes          | 411 k    | 24 M         |  Est.: 36540 s  |      8864 s |        880 s |        25 s |
+| UniRef50 [subsampled] | 4 M      | 176 M        |     N/A         |       N/A   |        N/A   |       696 s |
 
 (_Aligner running time not included. `snc-py` progresses consistently linearly during its main computation step, so the estimated time is a reliable lower bound for the actual time required._)
 
