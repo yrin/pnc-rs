@@ -45,7 +45,7 @@ Create a newline-separated list of memory node process <IP:PORT>'s. Save to e.g.
 
 Start at least one `pnc-tcphashmap-node <IP:PORT>` process on each node, so that each entry in `ip_addrs` has a corresponding process running.
 
-*DO NOT EVER EXPOSE THIS PROCESS TO THE INTERNET.* USE A FIREWALL IF NECESSARY.
+**DO NOT EVER EXPOSE THIS PROCESS TO THE INTERNET.** USE A FIREWALL IF NECESSARY.
 
 Run `pnc ALIGNMENTS_FILE ip_addrs > output.nc`
 `pnc` will shut down the pnc-tcphashmap-node processes one by one as they're drained of data.
