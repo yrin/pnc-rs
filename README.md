@@ -30,7 +30,9 @@ The outputs of all 4 tools were sorted and compared (for HSA+MMU). Each entry de
 ## Usage (on a single computer)
 
 Compile with Rust `cargo build -r`. 
+
 Run `pnc ALIGNMENTS_FILE > output.nc`, where ALIGNMENTS_FILE is a file containing alignments in blast-tab format (entry format: `QUERY_ACC<whitespace>REF_ACC<whitespace>SCORE<newline>`).
+
 `pnc` outputs the computed NC-scores to `stdout` and various info-messages to `stderr`. 
 
 There are no command line options available at this time.
@@ -42,6 +44,7 @@ Compile with Rust `cargo build -r`.
 Create a newline-separated list of memory node process <IP:PORT>'s. Save to e.g. "ip_addrs".
 
 Start at least one `pnc-tcphashmap-node <IP:PORT>` process on each node, so that each entry in `ip_addrs` has a corresponding process running.
+
 *DO NOT EVER EXPOSE THIS PROCESS TO THE INTERNET.* USE A FIREWALL IF NECESSARY.
 
 Run `pnc ALIGNMENTS_FILE ip_addrs > output.nc`
