@@ -1,6 +1,9 @@
 /*******************************************************************************
     pnc-rs : Copyright (c) 2024 Yrin Eldfjell : GPLv3
 
+    File pnc.rs:
+        Main binary.
+
     Multi-threaded Rust-implementation of the PNC (Parallel Neighbourhood 
     Correlation) algorithm described in my M.Sc. thesis. 
     See https://doi.org/10.1371/journal.pcbi.1000063 for a description of
@@ -11,10 +14,6 @@
 
     NOTE: This was my first actual Rust-program ever, so please have patience 
     with non-idiomatic patterns and design choices. 
-        The next obvious step is to write a distributed multi-node 
-    implementation, with the computations and sharded hashmaps being spread out
-    over several nodes and communicating with e.g. TCP. I don't know if it's
-    easier to use a library for this or write the networking logic directly.
         It is not my intention to provide a fully capable implementation
     with this package; it may however work for some use cases as-is.
 
@@ -35,6 +34,7 @@
     along with this program, see the LICENSES file.
     If not, see <https://www.gnu.org/licenses/>.
 *******************************************************************************/
+use bincode;
 use crossbeam_channel::{Receiver, Sender};
 use crossbeam_channel::bounded;
 use rayon::prelude::*;
@@ -47,12 +47,15 @@ use std::io::BufReader;
 use std::io::BufRead;
 use std::io::BufWriter;
 use std::io::Write;
-use std::path::Path;
 use std::iter::zip;
+use std::net::TcpStream;
+use std::path::Path;
 use std::str::FromStr;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Instant;
+
+use libpnc::network::*;
 
 macro_rules! info {
     () => {
@@ -64,15 +67,7 @@ macro_rules! info {
         eprintln!($($arg)*);
     }};
 }
-/*macro_rules! warn {
-    () => {
-        eprint!("[WARN] \n")
-    };
-    ($($arg:tt)*) => {{
-        eprint!("[WARN] ");
-        eprintln!($($arg)*);
-    }};
-}*/
+
 macro_rules! error {
     () => {
         eprint!("[ERROR] \n")
@@ -100,7 +95,6 @@ type CrossTermValue = CalcFloat;
 type CrossTermsVec = Vec<(QueryIdPair, CrossTermValue)>;
 type CrossTermsMap = HashMap<QueryIdPair, CrossTermValue>;
 
-
 struct ComputeResult<T> {
     sum: QuerySums,
     sum_sq: QuerySquareSums,
@@ -127,7 +121,9 @@ struct Alignments {
     alignment_scores: Vec::<QueryScoreVec> /* Indexed by TargetId. */
 }
 
+#[derive(Clone)]
 struct Config {
+    compute_nodes: ComputeNodes,
     n_queries: usize,
     n_calculation_threads: usize,
     n_memory_threads: u32,
@@ -137,13 +133,23 @@ struct Config {
     targets_per_chunk: usize,
     stime: Instant
 }
+
 impl Config {
-    pub fn new() -> Self {
+    pub fn new(compute_nodes: ComputeNodes) -> Self {
         let n_cores: usize = thread::available_parallelism().unwrap().get();
+        let n_memory_threads: u32 = match &compute_nodes {
+            ComputeNodes::Single => {
+                n_cores.try_into().unwrap()
+            },
+            ComputeNodes::Distributed(ref ip_addrs) => {
+                ip_addrs.len().try_into().unwrap()
+            }
+        };
         Config {
+            compute_nodes,
             n_queries: 0,
             n_calculation_threads: usize::max(n_cores, 2),
-            n_memory_threads: n_cores.try_into().unwrap(),
+            n_memory_threads,
             nc_threshold: 0.05,
             include_nc_score_vs_self: false,
             cross_term_buffer_per_thread: 8_000_000,
@@ -151,14 +157,22 @@ impl Config {
             stime: Instant::now() /* Program start time. */
         }
     }
-    pub fn update_n_queries(&self, n_queries: usize) -> Self {
+    pub fn update_n_queries(self, n_queries: usize) -> Self {
         let targets_per_chunk: usize = (n_queries / self.n_calculation_threads) + 1;
         Config {
             n_queries: n_queries,
             targets_per_chunk: targets_per_chunk,
-            ..*self
+            ..self
         }
     }
+}
+
+type IpAndPort = String;
+
+#[derive(Clone)]
+enum ComputeNodes {
+    Single,
+    Distributed(Vec<IpAndPort>)
 }
 
 /// Parse alignment scores in blast-tab format:
@@ -225,7 +239,7 @@ fn process_alignments(config: &Config,
         .par_chunks(config.targets_per_chunk)
         .enumerate()
         .for_each_with((tx_sum, tx_sum_sq, tx_ct_pool), 
-                       |(tx_local_sum, tx_local_sum_sq, tx_local_ct_pool), (_i_targets, targets)| {
+                       |(tx_local_sum, tx_local_sum_sq, tx_local_ct_pool), (targets_idx, targets)| {
             let flush_cross_terms = |cross_terms: Vec<CrossTermsVec>, 
                                      tx_ct_pool: &Vec<Sender<CrossTermsVec>>| 
                                          -> Vec<CrossTermsVec> {
@@ -243,6 +257,7 @@ fn process_alignments(config: &Config,
             let mut res = ComputeResult::<CrossTermsVec>::new(
                 config.n_queries, config.n_memory_threads);
             /* Loop over target ids. */
+            let mut targets_processed: usize = 0;
             let mut insert_counter: usize = 0;
             for query_scores in targets {
                 let q_len = query_scores.len();
@@ -255,28 +270,27 @@ fn process_alignments(config: &Config,
                         }
                         let key: QueryIdPair = (query_id_x, query_id_y);
                         let score_prod = (score_x) * (score_y);
-                        let ct_bin: usize = ((query_id_x) % config.n_memory_threads) as usize;
+                        let ct_bin = ((query_id_x) % config.n_memory_threads) as usize;
                         res.cross_terms_bins[ct_bin].push((key, score_prod));
                         insert_counter += 1;
                         if insert_counter >= config.cross_term_buffer_per_thread {
-                            /*info!(config.stime,"[TARGET BIN {}] insert counter {}, q_len {}, \
-                                         sum ct {:?}", 
-                                  _i_targets, 
-                                  insert_counter, 
-                                  q_len, 
-                                  res.cross_terms.iter().map(
-                                      |ct| ct.len()).collect::<Vec<usize>>());*/
-                            res.cross_terms_bins = flush_cross_terms(res.cross_terms_bins, &tx_local_ct_pool);
+                            res.cross_terms_bins = flush_cross_terms(
+                                res.cross_terms_bins, &tx_local_ct_pool);
                             insert_counter = 0;
                         }
                     }
                 }
+                targets_processed += 1;
+                if targets_processed % 10000 == 0 {
+                    let frac_proc = (targets_processed * 100) / targets.len();
+                    info!(config.stime,
+                          "[BIN {}]: calculated cross-terms for {:}% of target groups",
+                          targets_idx,
+                          frac_proc);
+                }
             }
             tx_local_sum.send(res.sum).expect("Internal thread error");
             tx_local_sum_sq.send(res.sum_sq).expect("Internal thread error");
-            /*info!(config.stime,"[TARGET BIN {}] insert counter {} FINAL, \
-                    sum ct {:?}", _i_targets, insert_counter, 
-                    res.cross_terms.iter().map(|ct| ct.len()).collect::<Vec<usize>>());*/
             flush_cross_terms(res.cross_terms_bins, &tx_local_ct_pool);
         });
 }
@@ -307,22 +321,39 @@ fn spawn_merger_threads(config: &Config,
         }
         cr.sum_sq
     });
+
     let merger_thread_pool_ct: Vec<JoinHandle<_>> = zip(cr.cross_terms_bins, rx_ct_pool)
         .enumerate()
-        .map(move |(_bin_idx, (mut cross_terms, rx_ct))| {
+        .map(move |(bin_idx, (mut cross_terms, rx_ct))| {
+            let config_clone = config.clone();
             thread::spawn(move || {
                 let mut iters_to_next_logging = 100;
-                for cross_terms_chunk in rx_ct {
-                    if iters_to_next_logging == 0 {
-                        /*info!(config.stime, "Merging an intermediate result for bin {:3}, \
-                              number of cross-terms in res: {:8}, \
-                              total cross-terms in bin before: {}", 
-                                 _bin_idx, cross_terms_chunk.len(), cross_terms.len());*/
-                        iters_to_next_logging = 100;
-                    }
-                    iters_to_next_logging -= 1;
-                    for (key, s) in cross_terms_chunk.iter() {
-                        cross_terms.entry(*key).and_modify(|e| *e += *s).or_insert(*s);
+                match config_clone.compute_nodes {
+                    ComputeNodes::Single => {
+                        for cross_terms_chunk in rx_ct {
+                            if iters_to_next_logging == 0 {
+                                /*info!(config_clone.stime, "Merging an intermediate result for bin {:3}, \
+                                      number of cross-terms in res: {:8}, \
+                                      total cross-terms in bin before: {}",
+                                         _bin_idx, cross_terms_chunk.len(), cross_terms.len());*/
+                                iters_to_next_logging = 100;
+                            }
+                            iters_to_next_logging -= 1;
+                            for (key, s) in cross_terms_chunk.iter() {
+                                cross_terms.entry(*key).and_modify(|e| *e += *s).or_insert(*s);
+                            }
+                        }
+                    },
+                    ComputeNodes::Distributed(ref ip_addrs) => {
+                        let mut storage_stream = TcpStream::connect(&ip_addrs[bin_idx as usize])
+                            .expect("Couldn't connect to storage node.");
+                        for cross_terms_chunk in rx_ct {
+                            /* Send to remote HashMap. */
+                            let encoded_payload: Vec<u8> = bincode::serialize(&cross_terms_chunk)
+                                .expect("Error serializing cross-terms.");
+                            send_packet(&mut storage_stream, TCP_HASHMAP_OP_STORE, &encoded_payload);
+                        }
+                        send_packet(&mut storage_stream, TCP_HASHMAP_OP_TERM_CONN, &vec![]);
                     }
                 }
                 cross_terms
@@ -334,16 +365,16 @@ fn spawn_merger_threads(config: &Config,
 
 /// Compute the NC scores from the merged intermediate computations.
 fn compute_nc_scores(num_queries: usize, 
-                     merged_results: ComputeResult::<CrossTermsMap>,
+                     merged_results: &ComputeResult::<CrossTermsMap>,
                      nc_threshold: CalcFloat) -> NCScoreVec {
     let n_float: CalcFloat = num_queries as CalcFloat;
-    let sum = merged_results.sum;
-    let sum_sq = merged_results.sum_sq;
+    let sum = &merged_results.sum;
+    let sum_sq = &merged_results.sum_sq;
     merged_results.cross_terms_bins
 //        .par_iter() /* faster, but also uses more memory */
-        .into_iter()
+        .iter()
         .flatten()
-        .map(|((x_u32, y_u32), sum_xy)| {
+        .map(|(&(x_u32, y_u32), &sum_xy)| {
             let x = (x_u32) as usize;
             let y = (y_u32) as usize;
             let n = n_float;
@@ -364,15 +395,8 @@ fn compute_nc_scores(num_queries: usize,
 }
 
 /// Print the NC scores to stdout
-fn print_nc_scores(nc_scores: NCScoreVec, alignments: Alignments) {
+fn print_nc_scores(nc_scores: NCScoreVec, accession_names: &Vec<&AccessionStr>) {
 
-    /* Create a lookup table for the query accessions. */
-    let mut accession_vec: Vec<(AccessionStr, QueryId)> = 
-        alignments.query_acc_lookup.into_iter().collect();
-    accession_vec.sort_by(|a, b| a.1.cmp(&b.1));
-    let accession_names: Vec<&AccessionStr> = accession_vec.iter()
-        .map(|(key, _)| key)
-        .collect();
     const WRITE_BUF_SIZE: usize = 1024 * 1024;
     let stdout = io::stdout().lock();
     let mut wr = BufWriter::with_capacity(WRITE_BUF_SIZE, stdout);
@@ -385,15 +409,15 @@ fn print_nc_scores(nc_scores: NCScoreVec, alignments: Alignments) {
         wr.write(b"\t").expect("I/O error during writing of results");
         wr.write(str_id_y).expect("I/O error during writing of results");
         wr.write(b"\t").expect("I/O error during writing of results");
-        // TODO: truncate to 3 decimal places:
-        wr.write(nc_score.to_string().as_bytes()).expect("I/O error during writing of results");
+        let nc_score_3_dec_places = (nc_score * 1000.0).round() / 1000.0;
+        wr.write(nc_score_3_dec_places.to_string().as_bytes())
+            .expect("I/O error during writing of results");
         wr.write(b"\n").expect("I/O error during writing of results");
     }
 }
 
 /// Uses the alignments stored in `path` to generate NC-scores.
-fn run(path: &Path) -> Result<(), Box<dyn Error>> { 
-    let config = Config::new();
+fn run(path: &Path, config: Config) -> Result<(), Box<dyn Error>> {
     info!(config.stime, "START. Processing alignments {} from ", path.display());
     info!(config.stime, "Number of calculation threads: {}", config.n_calculation_threads);
     info!(config.stime, "Number of cross-term hashmap storage threads: {}", config.n_memory_threads);
@@ -440,11 +464,51 @@ fn run(path: &Path) -> Result<(), Box<dyn Error>> {
         |t| t.join().expect("Internal thread error")).collect();
     info!(config.stime, "Finished cross-term calculations, now calculating NC-scores.");
 
-    let nc_scores = compute_nc_scores(config.n_queries, merged_results, config.nc_threshold);
-    info!(config.stime, "Finished calculating NC-scores, now printing results.");
+    /* Create a lookup table for the query accessions. */
+    let mut accession_vec: Vec<(AccessionStr, QueryId)> =
+        alignments.query_acc_lookup.into_iter().collect();
+    accession_vec.sort_by(|a, b| a.1.cmp(&b.1));
+    let accession_names: Vec<&AccessionStr> = accession_vec.iter()
+        .map(|(key, _)| key)
+        .collect();
 
-    print_nc_scores(nc_scores, alignments);
+    match &config.compute_nodes {
+        ComputeNodes::Single => {
+            let nc_scores = compute_nc_scores(config.n_queries, &merged_results, config.nc_threshold);
+            info!(config.stime, "Finished calculating NC-scores, now printing results.");
+            print_nc_scores(nc_scores, &accession_names);
+        },
+        ComputeNodes::Distributed(ip_addrs) => {
+            ip_addrs.iter().for_each(|ip_addr| {
+                loop {
+                    /* Reconnecting for each fetch is much faster for unknown reason. */
+                    let mut storage_stream = TcpStream::connect(&ip_addr)
+                        .expect("Couldn't connect to storage node.");
 
+                    /* Fetch bin from remote HashMap. */
+                    send_packet(&mut storage_stream, TCP_HASHMAP_OP_FETCH, &vec![]);
+                    let (op, payload) = read_packet(&mut storage_stream);
+                    match op {
+                        TCP_HASHMAP_RESPONSE_MAP_EMPTY => {
+                            send_packet(&mut storage_stream, TCP_HASHMAP_OP_SHUTDOWN, &vec![]);
+                            break;
+                        },
+                        TCP_HASHMAP_RESPONSE_MAP_NOT_EMPTY => {
+                            let cross_terms_bin: CrossTermsMap;
+                            cross_terms_bin = bincode::deserialize(&payload)
+                                .expect("Couldn't deserialize payload.");
+                            merged_results.cross_terms_bins = vec![cross_terms_bin];
+                            let nc_scores = compute_nc_scores(
+                                config.n_queries, &merged_results, config.nc_threshold);
+                            send_packet(&mut storage_stream, TCP_HASHMAP_OP_TERM_CONN, &vec![]);
+                            print_nc_scores(nc_scores, &accession_names);
+                        },
+                        u => panic!("Unknown response code from tchphashmap node: {}", u)
+                    }
+                }
+            });
+        }
+    }
     info!(config.stime, "END. Program finished.");
     Ok(())
 }
@@ -452,9 +516,20 @@ fn run(path: &Path) -> Result<(), Box<dyn Error>> {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        error!("First arg must be valid blast-tab alignment file.");
+        error!("First argument must be valid blast-tab alignment file.");
         panic!()
     }
     let alignments_filename = &args[1];
-    run(&Path::new(&alignments_filename)).expect("pnc-rs failed.");
+    let compute_nodes = if args.len() >= 3 {
+        let f = File::open(&args[2]).expect("Couldn't open compute node ip-listing.");
+        let ip_vec: Vec<IpAndPort> = BufReader::new(f)
+            .lines()
+            .map(|line| line.unwrap().trim().to_string())
+            .collect();
+        ComputeNodes::Distributed(ip_vec)
+    } else {
+        ComputeNodes::Single
+    };
+    let config = Config::new(compute_nodes);
+    run(&Path::new(&alignments_filename), config).expect("pnc-rs failed.");
 }

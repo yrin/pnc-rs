@@ -27,10 +27,27 @@ Peak memory usage for `pnc-rs`on the subsampled UniRef50 dataset was about 58 GB
 
 The outputs of all 4 tools were sorted and compared (for HSA+MMU). Each entry deviated from the mean by at most 0.00075 [the valid range of NC-scores is 0-1], which is reasonable due to the number of significant digits and usage of 32-bit floats during the calculations in both PNC versions.
 
-## Usage
+## Usage (on a single computer)
 
-Compile with Rust `cargo`. The resulting binary takes a blast-tab style alignment file as its first argument (entry format: `QUERY_ACC<whitespace>REF_ACC<whitespace>SCORE<newline>`). It outputs the computed NC-scores to `stdout` and various info-messages to `stderr`. There are no command line options available at this time.
+Compile with Rust `cargo build -r`. 
+Run `pnc ALIGNMENTS_FILE > output.nc`, where ALIGNMENTS_FILE is a file containing alignments in blast-tab format (entry format: `QUERY_ACC<whitespace>REF_ACC<whitespace>SCORE<newline>`).
+`pnc` outputs the computed NC-scores to `stdout` and various info-messages to `stderr`. 
 
+There are no command line options available at this time.
+
+## Usage (as a distributed computation over TCP)
+
+Compile with Rust `cargo build -r`. 
+
+Create a newline-separated list of memory node process <IP:PORT>'s. Save to e.g. "ip_addrs".
+
+Start at least one `pnc-tcphashmap-node <IP:PORT>` process on each node, so that each entry in `ip_addrs` has a corresponding process running.
+*DO NOT EVER EXPOSE THIS PROCESS TO THE INTERNET.* USE A FIREWALL IF NECESSARY.
+
+Run `pnc ALIGNMENTS_FILE ip_addrs > output.nc`
+`pnc` will shut down the pnc-tcphashmap-node processes one by one as they're drained of data.
+
+There are no command line options available at this time.
 
 ## References
 [1] Song N, Joseph JM, Davis GB, Durand D (May 2008). Sequence Similarity Network Reveals Common Ancestry of Multidomain Proteins.
