@@ -41,14 +41,17 @@ There are no command line options available at this time.
 
 Compile with Rust `cargo build -r`. 
 
-Create a newline-separated list of memory node process <IP:PORT>'s. Save to e.g. "ip_addrs".
+Create a newline-separated list of memory node process `IP:PORT` entries. Save to e.g. `ip_addrs`.
 
-Start at least one `pnc-tcphashmap-node <IP:PORT>` process on each node, so that each entry in `ip_addrs` has a corresponding process running.
+Allocate `N+1` nodes for the job, where `N` is the number of memory nodes. I recommend experimenting with subsamples of your dataet to determine memory requirements.
+
+Start at least one `pnc-tcphashmap-node <IP:PORT>` process on each memory node, so that each entry in `ip_addrs` has a corresponding process running. `pnc` assumes each node has an equal amount of memory.
 
 **DO NOT EVER EXPOSE THIS PROCESS TO THE INTERNET.** USE A FIREWALL IF NECESSARY.
 
-Run `pnc ALIGNMENTS_FILE ip_addrs > output.nc`
-`pnc` will shut down the pnc-tcphashmap-node processes one by one as they're drained of data.
+Run `pnc ALIGNMENTS_FILE ip_addrs > output.nc` on the main node. Use the fastest available file system to store the output - it is a likely bottleneck even though the writing is single-threaded.
+
+`pnc` will shut down the `pnc-tcphashmap-node` processes one by one as they're drained of data.
 
 There are no command line options available at this time.
 
