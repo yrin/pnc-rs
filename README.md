@@ -43,7 +43,7 @@ Compile with Rust `cargo build -r`.
 
 Create a newline-separated list of memory node process `IP:PORT` entries. Save to e.g. `ip_addrs`.
 
-Allocate `N+1` nodes for the job, where `N` is the number of memory nodes. I recommend experimenting with subsamples of your dataet to determine memory requirements.
+Allocate `N+1` nodes for the job, where `N` is the number of memory nodes. I recommend experimenting with subsamples of your dataset to determine memory requirements.
 
 Start at least one `pnc-tcphashmap-node <IP:PORT>` process on each memory node, so that each entry in `ip_addrs` has a corresponding process running. `pnc` assumes each node has an equal amount of memory.
 
