@@ -396,7 +396,6 @@ fn compute_nc_scores(num_queries: usize,
 
 /// Print the NC scores to stdout
 fn print_nc_scores(nc_scores: NCScoreVec, accession_names: &Vec<&AccessionStr>) {
-
     const WRITE_BUF_SIZE: usize = 1024 * 1024;
     let stdout = io::stdout().lock();
     let mut wr = BufWriter::with_capacity(WRITE_BUF_SIZE, stdout);
@@ -494,13 +493,13 @@ fn run(path: &Path, config: Config) -> Result<(), Box<dyn Error>> {
                             break;
                         },
                         TCP_HASHMAP_RESPONSE_MAP_NOT_EMPTY => {
+                            send_packet(&mut storage_stream, TCP_HASHMAP_OP_TERM_CONN, &vec![]);
                             let cross_terms_bin: CrossTermsMap;
                             cross_terms_bin = bincode::deserialize(&payload)
                                 .expect("Couldn't deserialize payload.");
                             merged_results.cross_terms_bins = vec![cross_terms_bin];
                             let nc_scores = compute_nc_scores(
                                 config.n_queries, &merged_results, config.nc_threshold);
-                            send_packet(&mut storage_stream, TCP_HASHMAP_OP_TERM_CONN, &vec![]);
                             print_nc_scores(nc_scores, &accession_names);
                         },
                         u => panic!("Unknown response code from tchphashmap node: {}", u)
@@ -521,7 +520,7 @@ fn main() {
     }
     let alignments_filename = &args[1];
     let compute_nodes = if args.len() >= 3 {
-        let f = File::open(&args[2]).expect("Couldn't open compute node ip-listing.");
+        let f = File::open(&args[2]).expect("Couldn't open memory node ip-listing.");
         let ip_vec: Vec<IpAndPort> = BufReader::new(f)
             .lines()
             .map(|line| line.unwrap().trim().to_string())
@@ -531,5 +530,5 @@ fn main() {
         ComputeNodes::Single
     };
     let config = Config::new(compute_nodes);
-    run(&Path::new(&alignments_filename), config).expect("pnc-rs failed.");
+    run(&Path::new(&alignments_filename), config).expect("pnc failed.");
 }
